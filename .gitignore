@@ -1,0 +1,29 @@
+# Dependencies (installed by the profile, never committed here)
+node_modules/
+.pnpm-store/
+pnpm-lock.yaml
+
+# Local runtime data: the derived-directive extraction cache lives here
+.dsh-data/
+.runtime/
+state.json
+*.tmp
+*.corrupt-*
+
+# Logs and OS noise
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test and coverage output
+coverage/
+.nyc_output/
+test-results/
+
+# Editor and tooling caches
+.idea/
+.vscode/
+*.swp
+.eslintcache
