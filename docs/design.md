@@ -197,19 +197,26 @@ interface Directive {
 
 | 需求 | 机制 | 核对状态 |
 | --- | --- | --- |
-| 台账派生与恢复 | `ctx.sessionProjections.register({ key, stateSchema, init, apply, wire, stateVersion })` | 已核对（当前运行时导出该签名） |
-| 读取派生结果 | `ctx.sessionProjections.stateOf(session, key)` | 已核对 |
-| 每步常驻规则 | `ctx.systemPrompt.context({ name, order, text })` | 已核对 |
-| 开场短提醒 | `agent/pre-step` 瀑布，返回展开后的 `PreStepDecision` | 已核对（签名与 `startsRequestSeries` 字段） |
-| 硬禁令拦截 | `ctx.tools.guard()`，同步返回拒绝理由 | 已核对 |
-| 用户命令 | `ctx.commands.register({ ..., recordInput: true })` | 已核对 |
-| 预算度量 | `ctx.tokenMeter.measure(session)` / `estimateMessage(message)` | 已核对 |
-| 插件自有持久化 | `config.dataDir` 下自管 JSON（与既有插件一致），或 `ctx.storageDomain.open(spec)` | 已核对；P0 优先用前者 |
-| 侧栏面板 | Client `sidebar.panellist` + `main` 槽位 | 已核对 |
-| Turn 摘要行 | Client `conversation.chat.turnTail` 槽位 | 已核对 |
-| 自定义 Chat 行 | `conversation.chat.node` 为固定 key 表，**不复用**；如需独立行，走自定义会话事件定义 | 未核对，不在 P0 范围 |
+| 台账派生与恢复 | `ctx.sessionProjections.register({ key, stateSchema, init, apply, wire, stateVersion })` | 已核对并已实现 |
+| 读取派生结果 | `ctx.sessionProjections.stateOf(session, key)` | 已核对并已实现 |
+| 每步常驻规则 | `ctx.systemPrompt.context({ name, order, text })` | 已核对并已实现（`order: 150`，`required: true`） |
+| 开场短提醒 | `agent/pre-step` 瀑布，返回展开后的 `PreStepDecision` | 已核对并已实现（默认关闭） |
+| 硬禁令拦截 | `ctx.tools.guard()`，同步返回拒绝理由 | 已核对并已实现 |
+| 用户命令 | `ctx.commands.register({ ..., recordInput: true })` | 已核对并已实现 |
+| 预算度量 | 自实现的确定性估算（CJK 逐字 + 其余 4 字符/token） | 已实现；未用 `ctx.tokenMeter`，因为它需要真实 provider tokenizer 而预算只需相对比较 |
+| 插件自有持久化 | **不需要**：台账完全由日志派生，无归类缓存（P0 未启用模型归类） | 已收敛 |
+| 会话内面板 | Client `conversation.input.dock`（提供 `useProjection` 标准 prop） | 已核对并已实现 |
+| Turn 摘要行 | Client `conversation.chat.turnTail` 槽位 | 已核对；放在 P2 |
+| 自定义 Chat 行 | `conversation.chat.node` 为固定 key 表，**不复用** | 未采用 |
 
 明确不使用的机制：新增会话事件类型（会破坏会话可重开性）、`system-prompt/assemble` 全量替换（影响面过大）、历史物理改写（破坏审计）。
+
+### 2.9.1 原设计的两处修正
+
+实现过程中，设计文档里的两个选择被实测推翻，记录下来以免后来者重犯：
+
+1. **侧栏面板（`sidebar.panellist` + `main`）改为输入区 dock（`conversation.input.dock`）**。台账是每个会话的状态，放进全局侧栏意味着用户要先跳出对话才能查看；而 `conversation.input.dock` 直接给出 `useProjection`，正好读取 Host 已折叠好的值，且不需要额外的 HTTP 接口。
+2. **预算超限的呈现方式**。原设计写「被降级的条目在面板中仍然可见并标注未注入」，但投影的 `wire.view` 是 `state → view` 的纯函数，拿不到预算结果。最终让 `view` 同时读取渲染结果，给每条补 `injected` 布尔值、给整体补 `injected` 计数，面板据此标注——否则面板会声称模型看到了它其实没看到的要求，而这正是本插件要消灭的那类谎言的镜像。
 
 ## 2.10 存储、版本与恢复
 
@@ -292,19 +299,29 @@ interface Directive {
 
 ## 3.5 分期与验收
 
-| 阶段 | 内容 | 验收标准 |
-| --- | --- | --- |
-| P0 | 确定性候选抽取 + 台账投影 + 常驻注入 + `/rule` 命令 | 重启后台账逐字节一致；任一步的请求里都能看到全部 active 规则；上下文文本在无变更时不重写 |
-| P1 | 取代链 + 侧栏面板 + Turn 摘要 | 3.1 的夹具在面板里正确显示 `R2 → R3`、`D1 → D2`，且只有新值 active |
-| P2 | guard 拦截 + 收尾自检 | 被禁路径写入被拒且理由含规则 id 与来源 turn；未遵守项在 Turn 摘要中出现 |
+| 阶段 | 内容 | 验收标准 | 状态 |
+| --- | --- | --- | --- |
+| P0 | 确定性候选抽取 + 台账投影 + 常驻注入 + `/rule` 命令 | 重启后台账逐字节一致；任一步的请求里都能看到全部 active 规则；上下文文本在无变更时不重写 | 已上线并通过真实会话回放 |
+| P1 | 取代链 + 面板 | 3.1 的夹具里 `R2 → R3`、`D1 → D2` 正确显示，且只有新值 active | 已上线（面板为输入区 dock，见 2.9.1） |
+| P2 | guard 拦截 + 收尾自检 | 被禁路径写入被拒且理由含规则来源轮次；未遵守项在 Turn 摘要中出现 | 拦截已上线；收尾自检待做 |
 
 P0 不含任何额外的模型调用，也不含任何新的会话事件类型，因此可以在现有运行时上直接安装与回滚。
+
+### 3.5.1 实现期得到的实测结论
+
+以下几项原设计没有预见，是拿真实会话日志（13300+ 事件、215 条用户消息）回放后才发现的：
+
+- **标记词必须出现在句首**。原设计只说「祈使与绝对语气模式」，实测把 `看你几乎每次回答问题都清理残留…`、`这个问题一定要解决掉`、`怎么从机制上让每次端到端运行完…` 全部误判成长期要求。现在的判据是：句首窗口（12 字符）内出现标记，或整句短于 30 字符且不以叙述/疑问开头。
+- **逗号不是子句边界**。`一级标题只用于划分顶层主题，不得写成要点` 是一句完整约束，按逗号切开会让主语丢失；但 `对象是：每一轮的对话，不用考虑跨对话` 又确实需要去掉冒号前缀。现在的做法是按终止符切分，再判断逗号前是否是「标签」（短且非祈使）。
+- **禁区与要求必须分槽**。`算了，还是用 pnpm，别再提 npm` 同时表达「改用 pnpm」和「禁止 npm」。原设计让它们共享 `tool.package-manager`，结果禁令会把刚下达的指令一并取代。现在禁令统一加 `ban.` 前缀独立成槽。
+- **路径禁令的槽位要含路径**。否则「不要动 A 目录」会被后来的「不要动 B 目录」取代，A 的保护静默消失。
+- **抽取规则变更等于折叠语义变更**，必须同步 bump `stateVersion`，否则持久化投影缓存会继续提供按旧规则产出的结果。
 
 ## 3.6 度量
 
 - **遵守率**：准备一组「先要求、后推翻」的对照对话，比较无插件 / 有插件时最终行为是否符合最新要求。
-- **开销**：常驻区 token 占用、每轮增量请求字节、前缀缓存命中率变化。
-- **误报**：被判为规则的语句中，用户点了「撤销」的比例。
-- **稳定性**：同样的日志在多次恢复后的台账哈希是否一致。
+- **开销**：常驻区 token 占用、每轮增量请求字节、前缀缓存命中率变化。实测一段 215 条消息的会话台账稳定在 180 上下文 token 量级。
+- **误报**：被判为要求的语句中，用户点了「撤销」的比例。首轮实现为 42 条 / 215 条消息，三轮校准后为 17 条 / 215 条，剩余条目人工复核均为真实要求。
+- **稳定性**：同样的日志在多次恢复后的台账哈希是否一致（`renderLedger` 幂等性单测已覆盖）。
 
 前三项决定这个插件是否值得长期开启，第四项决定它是否安全。
