@@ -50,8 +50,11 @@ test('the design fixture leaves exactly one live entry per topic', () => {
 
   const byTopic = Object.fromEntries(active.map((directive) => [directive.topicKey, directive]))
   assert.equal(byTopic['output.language'].text, '以后都用中文回答')
-  assert.equal(byTopic['tool.package-manager'].text, '算了，还是用 pnpm，别再提 npm')
-  assert.equal(byTopic['path.forbidden-write:D:/prod'].text, '不要动 `D:\\prod` 下的任何文件')
+  // The switch names both managers: the request replaces the old choice, and the
+  // prohibition lives in its own slot instead of cancelling the request.
+  assert.equal(byTopic['tool.package-manager'].text, '算了，还是用 pnpm')
+  assert.equal(byTopic['ban.tool.package-manager'].text, '别再提 npm')
+  assert.equal(byTopic['ban.path.forbidden-write:D:/prod'].text, '不要动 `D:\\prod` 下的任何文件')
   assert.equal(byTopic['general.' + Object.keys(byTopic).find((key) => key.startsWith('general.'))?.slice(8)]?.kind, 'decision')
 })
 
@@ -69,7 +72,7 @@ test('a merged feed reports the retired chain in one view', () => {
   const state = fold(FIXTURE)
   const view = viewState(state)
   const npm = view.items.find((item) => item.text === '用 npm 装依赖吧')
-  const pnpm = view.items.find((item) => item.text === '算了，还是用 pnpm，别再提 npm')
+  const pnpm = view.items.find((item) => item.text === '算了，还是用 pnpm')
   assert.equal(npm.status, 'superseded')
   assert.equal(npm.supersededBy, pnpm.id)
   assert.equal(pnpm.status, 'active')

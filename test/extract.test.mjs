@@ -17,13 +17,12 @@ test('the design fixture: four requirements across one conversation', () => {
   assert.equal(ban[0].kind, 'ban')
   assert.equal(ban[0].checker.type, 'forbidden-write')
   assert.equal(ban[0].checker.value, 'D:/prod')
-  // The clause names two managers; the forbidden one is the one after "别再",
-  // not the one the user just switched to.
+  // The clause names two managers: pnpm is requested, npm is forbidden. Both
+  // survive, because a prohibition is a different intent from an instruction.
   const switched = extractDirectives('算了，还是用 pnpm，别再提 npm')
-  assert.equal(switched.length, 1)
-  assert.equal(switched[0].kind, 'ban')
-  assert.equal(switched[0].topicKey, 'tool.package-manager')
-  assert.equal(switched[0].checker.value, 'npm')
+  assert.deepEqual(switched.map((item) => item.kind), ['decision', 'ban'])
+  assert.equal(switched[1].checker.value, 'npm')
+  assert.notEqual(switched[0].topicKey, switched[1].topicKey)
 })
 
 test('a question states no requirement', () => {
@@ -41,6 +40,26 @@ test('one message can yield several requirements', () => {
   const found = extractDirectives('以后都用中文。另外测试一律跑 node --test。还有不要改 `D:\\prod`。')
   assert.equal(found.length, 3)
   assert.deepEqual(found.map((item) => item.kind), ['rule', 'rule', 'ban'])
+})
+
+test('a scope label is not recorded as the requirement', () => {
+  // Observed live: the label became the "requirement" while the actual
+  // instruction was cut away with it.
+  const found = extractDirectives('对象是：每一轮的对话，不用考虑跨对话')
+  assert.equal(found.length, 1)
+  assert.equal(found[0].text, '不用考虑跨对话')
+})
+
+test('a comma inside one constraint does not split its subject away', () => {
+  const found = extractDirectives('一级标题只用于划分真正独立的顶层主题，不得把每个要点都写成一级标题')
+  assert.equal(found.length, 1)
+  assert.ok(found[0].text.startsWith('一级标题只用于'))
+})
+
+test('an enumeration marker is stripped from the recorded text', () => {
+  const found = extractDirectives('1、以后提交前必须跑测试')
+  assert.equal(found.length, 1)
+  assert.equal(found[0].text, '以后提交前必须跑测试')
 })
 
 test('paths normalize to a comparison-stable form', () => {
