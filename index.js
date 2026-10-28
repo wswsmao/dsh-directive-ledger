@@ -17,6 +17,8 @@ import { checkCall } from './lib/enforce.js'
 import { extractDirectives } from './lib/extract.js'
 import { reminderLines, reminderMessage } from './lib/remind.js'
 import { registerRoute } from './lib/route.js'
+import { judgeMessage } from './lib/judge.js'
+import { openVerdicts, resolveDataDir, verdictKey } from './lib/verdicts.js'
 import { nativePackage } from './lib/native.js'
 
 const { z } = await nativePackage('zod')
@@ -28,12 +30,13 @@ export const name = 'directive-ledger'
 /**
  * Services the ledger needs.
  *
- * `webServer` and `connection` carry the browser's delete action. They are part
- * of this list rather than an optional inject because without them the panel
- * would render a button that cannot work — a visible lie is worse than the
- * plugin staying inactive.
+ * `llm` is required rather than optional: without it the plugin can only run the
+ * deterministic rules, and those are exactly what produced the false pins this
+ * version exists to remove. `webServer` and `connection` carry the browser's
+ * delete action — without them the panel would render a button that cannot work,
+ * and a visible lie is worse than the plugin staying inactive.
  */
-export const inject = ['sessionProjections', 'systemPrompt', 'tools', 'commands', 'agents', 'webServer', 'connection']
+export const inject = ['sessionProjections', 'systemPrompt', 'tools', 'commands', 'agents', 'llm', 'webServer', 'connection']
 
 /** Where the reminder context sits: after the host's own facts, before tools. */
 const CONTEXT_ORDER = 150
@@ -57,6 +60,11 @@ const directiveSchema = z.object({
   supersedes: z.array(z.string()).readonly(),
   supersededBy: z.string().nullable(),
   checker: checkerSchema.nullable(),
+  // Provenance of the decision: a semantic verdict, the deterministic rules, or
+  // a user command. Optional so rows written by the previous version still load;
+  // they are treated as rule-derived and corrected on the next fold.
+  judged: z.enum(['model', 'rules', 'fallback']).optional(),
+  reason: z.string().optional(),
 })
 
 const stateSchema = z.object({
@@ -82,6 +90,8 @@ const viewSchema = z.object({
     supersededBy: z.string().nullable(),
     enforceable: z.boolean(),
     injected: z.boolean(),
+    judged: z.string().optional(),
+    reason: z.string().optional(),
   })).readonly(),
 })
 
@@ -95,10 +105,31 @@ function readConfig(config) {
   if (!['off', 'auto', 'always'].includes(reminderMode)) throw new TypeError("reminderMode must be 'off', 'auto' or 'always'")
   const enforce = config.enforce ?? 'guard'
   if (!['off', 'guard'].includes(enforce)) throw new TypeError("enforce must be 'off' or 'guard'")
-  return { budgetTokens, textLanguage, reminderMode, enforce }
+  const extraction = config.extraction ?? 'semantic'
+  if (!['semantic', 'deterministic'].includes(extraction)) throw new TypeError("extraction must be 'semantic' or 'deterministic'")
+  const judgeTimeoutMs = config.judgeTimeoutMs ?? 8000
+  if (!Number.isSafeInteger(judgeTimeoutMs) || judgeTimeoutMs < 1000) throw new TypeError('judgeTimeoutMs must be an integer >= 1000')
+  const judgeProvider = typeof config.judgeProvider === 'string' ? config.judgeProvider.trim() : ''
+  return {
+    budgetTokens,
+    textLanguage,
+    reminderMode,
+    enforce,
+    extraction,
+    judgeTimeoutMs,
+    judgeProvider,
+    dataDir: resolveDataDir(config.dataDir),
+  }
 }
 
 const EMPTY_VIEW = Object.freeze({ revision: 0, injected: 0, items: [] })
+
+/** Join one message's text blocks; the fold and the judge must see the same text. */
+function textOfMessage(message) {
+  const content = message?.content
+  if (!Array.isArray(content)) return ''
+  return content.filter((part) => part?.type === 'text').map((part) => part.text).join('\n')
+}
 
 /**
  * Mount the ledger.
@@ -107,6 +138,20 @@ const EMPTY_VIEW = Object.freeze({ revision: 0, injected: 0, items: [] })
  */
 export function apply(ctx, config = {}) {
   const options = readConfig(config)
+  const warn = (message) => ctx.logger.warn(`[directive-ledger] ${message}`)
+  const verdicts = openVerdicts(options.dataDir, { warn })
+  ctx.effect(() => () => verdicts.close(), 'directive-ledger: verdict cache')
+
+  /**
+   * The synchronous face of the verdict cache, used by the fold.
+   *
+   * A message is keyed by its own text, so a verdict is reusable across sessions
+   * and survives replay without being tied to any event position.
+   */
+  const resolve = options.extraction === 'semantic'
+    ? (text) => verdicts.get(verdictKey(text))
+    : undefined
+
   /** Ledger state for sessions that have no live cell yet. */
   const stateOf = (session) => ctx.sessionProjections.stateOf(session, PROJECTION_KEY) ?? emptyState()
   /**
@@ -122,13 +167,41 @@ export function apply(ctx, config = {}) {
     key: PROJECTION_KEY,
     stateSchema,
     init: () => emptyState(),
-    apply: applyEvent,
+    // The fold reads verdicts through `resolve`; it can never await one, so the
+    // judge below fills the cache and `refine` applies it on the next event.
+    apply: (state, event) => applyEvent(state, event, { resolve }),
     wire: {
       viewSchema,
       view: (state) => viewOf(state, renderOf(state).included.map((directive) => directive.id)),
     },
     stateVersion: STATE_VERSION,
   }), 'directive-ledger: projection')
+
+  if (options.extraction === 'semantic') {
+    ctx.effect(() => ctx.on('session/event', (session, event) => {
+      if (event.type !== 'user/message') return
+      const message = event.data
+      if (message?.source?.kind !== 'user') return
+      const text = textOfMessage(message)
+      if (text.trim() === '') return
+      if (resolve(text) !== undefined) return
+      // Fire and forget: the judgement must never delay or fail the turn. Its
+      // result lands in the cache and is applied by the next fold.
+      const active = Object.values(stateOf(session).directives).filter((directive) => directive.status === 'active')
+      void judgeMessage({
+        llm: ctx.llm,
+        verdicts,
+        text,
+        active,
+        options: {
+          provider: options.judgeProvider === '' ? (session.requestHeader()?.config.provider ?? '') : options.judgeProvider,
+          model: options.judgeProvider === '' ? (session.requestHeader()?.config.model ?? '') : options.judgeProvider,
+          timeoutMs: options.judgeTimeoutMs,
+          warn,
+        },
+      }).catch((error) => warn(`judgement failed: ${error?.message ?? String(error)}`))
+    }), 'directive-ledger: semantic judge')
+  }
 
   ctx.effect(() => ctx.systemPrompt.context({
     name: 'directive-ledger',

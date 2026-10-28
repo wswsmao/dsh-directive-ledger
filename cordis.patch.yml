@@ -5,5 +5,6 @@
         budgetTokens: 800
         textLanguage: auto
         reminderMode: 'off'
-        extraction: deterministic
+        extraction: semantic
+        judgeTimeoutMs: 8000
         enforce: guard
