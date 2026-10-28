@@ -316,6 +316,16 @@ P0 不含任何额外的模型调用，也不含任何新的会话事件类型�
 - **禁区与要求必须分槽**。`算了，还是用 pnpm，别再提 npm` 同时表达「改用 pnpm」和「禁止 npm」。原设计让它们共享 `tool.package-manager`，结果禁令会把刚下达的指令一并取代。现在禁令统一加 `ban.` 前缀独立成槽。
 - **路径禁令的槽位要含路径**。否则「不要动 A 目录」会被后来的「不要动 B 目录」取代，A 的保护静默消失。
 - **抽取规则变更等于折叠语义变更**，必须同步 bump `stateVersion`，否则持久化投影缓存会继续提供按旧规则产出的结果。
+- **面板必须复用宿主的布局变量，不能写死像素**。首版卡片没有宽度约束，在通栏的 `conversation.input.dock` 里铺满整个对话列，与居中的输入框明显错位。修法是照抄宿主自己的算法：输入框外层容器有 `padding: 0 var(--dsh-composer-side-clearance)`，卡片自身 `max-width: var(--dsh-composer-card-max-width)` 且 `margin: 0 auto`。卡片以 `width: calc(100% - 2 * clearance)` + 同样的 `max-width` + `margin: 0 auto` 复现这段几何，用户拖动列宽或窗口时自动跟随。
+- **同一槽位里的邻居是最可靠的样式参照**。`conversation.input.dock` 里的 `TodoPanel` 也是一张卡片，它的 CSS 规则直接给出了这个槽位的正确几何，比推测「该多大」可靠得多。
+
+### 3.5.2 与宿主其他插件共存的运维教训
+
+这一条与本插件的代码无关，但它是排查过程中真实发生的，记录下来避免重犯：
+
+- **崩溃表象会指向无关的邻居**。某次重启报 `web boot: 1 entry did not activate / dsh-remote: import failed`。核查结论：`dsh-remote` 默认 `updateMode: 'auto'`，会定时从 npm 拉新版本 tarball、逐个 rename 覆盖自己的 `lib/*.js`，然后热替换运行中的 Host 半。崩溃发生在写入窗口内。磁盘上的文件与官方 tarball 逐字节一致（35 个文件 SHA256 全部相同），不是安装损坏。
+- **`node_modules` 里的运行时标记会被 pnpm 清掉**。用 `update-mode` 文件关闭自更新，对下一次 `pnpm install` 无效——该目录会被整体重建。真正稳定的做法是让 manifest 与 lockfile 的版本一致，或走插件自己的设置页。
+- **安装/卸载本插件会重装整个 profile 的依赖**。`install_bundle` 底层是 pnpm 全量对齐，因此会「修正」任何被第三方插件在 `node_modules` 内私改的版本。给这类操作留出时间窗，不要在其前后立即重启。
 
 ## 3.6 度量
 
