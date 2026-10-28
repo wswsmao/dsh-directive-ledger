@@ -71,15 +71,38 @@ window.__ModuleLoader__.load({
 
     // ----------------------------------------------------------------- style
 
+    /**
+     * Match the composer card's geometry.
+     *
+     * The dock entry and the input box are siblings in the same `composerStack`,
+     * but the input box sits inside a wrapper carrying
+     * `padding: 0 var(--dsh-composer-side-clearance)` and caps itself at
+     * `--dsh-composer-card-max-width`. A dock entry has neither, so without this
+     * rule it spans the full conversation column while the input stays centred —
+     * the card overhangs the box it describes.
+     *
+     * Reproducing the wrapper's padding as a width subtraction, then applying the
+     * same cap and `margin: 0 auto`, yields the identical outer width in both
+     * regimes the host defines (wide column: the cap binds; narrow/embedded:
+     * `100% - 2 * clearance` binds). No hard-coded pixel value is involved, so
+     * the card follows the composer when the user resizes the column or the
+     * window.
+     */
     const CSS = `
 .dld-dock {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  width: calc(
+    100%
+    - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance)
+  );
+  max-width: var(--dsh-composer-card-max-width);
+  margin: 0 auto;
   padding: 8px 10px;
-  margin-bottom: 6px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-panel, 12px);
   background: var(--dsw-alias-bg-layer-2);
   font-size: 12px;
   line-height: 1.5;

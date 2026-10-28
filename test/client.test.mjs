@@ -152,3 +152,17 @@ test('the dock survives a projection that has not arrived yet', () => {
   const t = ctx.locale.bind('directive-ledger')
   assert.equal(render(component({ useProjection: () => undefined, t })), '')
 })
+
+test('the dock aligns itself to the composer card instead of spanning the column', () => {
+  // The regression this guards: the card rendered full-width while the input box
+  // stayed centred and capped, so the card visually overhung the box below it.
+  const start = source.indexOf('const CSS = `')
+  const css = source.slice(start, source.indexOf('`', start + 'const CSS = `'.length))
+  assert.match(css, /\.dld-dock\s*\{/, 'the dock rule is missing')
+  assert.match(css, /max-width:\s*var\(--dsh-composer-card-max-width\)/, 'the card must use the composer width cap')
+  assert.match(css, /margin:\s*0 auto/, 'the card must be centred like the composer')
+  assert.match(css, /--dsh-composer-side-clearance/, 'the card must subtract the composer side clearance')
+  assert.match(css, /box-sizing:\s*border-box/, 'border-box keeps the padding inside the cap')
+  // A hard-coded pixel width would stop following the composer on resize.
+  assert.doesNotMatch(css, /\bwidth:\s*\d+px/, 'the dock must not hard-code a pixel width')
+})
