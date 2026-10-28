@@ -185,6 +185,19 @@ export function apply(ctx, config = {}) {
       const text = textOfMessage(message)
       if (text.trim() === '') return
       if (resolve(text) !== undefined) return
+      // The route the conversation is already using. Reading it once here keeps
+      // the judge on the same model the user selected, so a provider that only
+      // serves one model is not asked for another.
+      const header = session.requestHeader()?.config
+      const route = options.judgeProvider === ''
+        ? { provider: header?.provider ?? '', model: header?.model ?? '' }
+        : { provider: options.judgeProvider, model: header?.model ?? '' }
+      if (route.provider === '' || route.model === '') {
+        // No route yet (a brand-new session before its first request). The rules
+        // still record the message and `refine` corrects it once a verdict is
+        // possible, so skipping here loses nothing.
+        return
+      }
       // Fire and forget: the judgement must never delay or fail the turn. Its
       // result lands in the cache and is applied by the next fold.
       const active = Object.values(stateOf(session).directives).filter((directive) => directive.status === 'active')
@@ -193,12 +206,7 @@ export function apply(ctx, config = {}) {
         verdicts,
         text,
         active,
-        options: {
-          provider: options.judgeProvider === '' ? (session.requestHeader()?.config.provider ?? '') : options.judgeProvider,
-          model: options.judgeProvider === '' ? (session.requestHeader()?.config.model ?? '') : options.judgeProvider,
-          timeoutMs: options.judgeTimeoutMs,
-          warn,
-        },
+        options: { ...route, timeoutMs: options.judgeTimeoutMs, warn },
       }).catch((error) => warn(`judgement failed: ${error?.message ?? String(error)}`))
     }), 'directive-ledger: semantic judge')
   }
