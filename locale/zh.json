@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "title": "要求台账",
+    "description": "把用户明确提出的长期要求固定成一份每步都可见、可被新要求推翻的台账，并拦截能机器判定的禁令。"
+  },
+  "panel": {
+    "title": "要求台账",
+    "subtitle": "本会话内仍然生效的用户要求"
+  },
+  "empty": {
+    "title": "还没有识别到明确要求",
+    "body": "当你说「以后都用中文」「不要动 D:\\prod」这类话时，条目会出现在这里。也可以直接用 /rule add 添加。"
+  },
+  "status": {
+    "active": "生效中",
+    "superseded": "已取代",
+    "revoked": "已撤销",
+    "retracted": "已失效"
+  },
+  "kind": {
+    "pin": "固定",
+    "ban": "禁止",
+    "rule": "规则",
+    "preference": "偏好",
+    "decision": "决定"
+  },
+  "authority": {
+    "user-pinned": "手动固定",
+    "user-stated": "用户陈述",
+    "literal-anchored": "字面锚定",
+    "model-inferred": "模型判断"
+  },
+  "action": {
+    "refresh": "刷新",
+    "close": "关闭",
+    "jump": "跳到来源"
+  },
+  "summary": {
+    "active": "生效 {count} 条",
+    "enforced": "其中 {count} 条可强制执行",
+    "superseded": "已取代 {count} 条"
+  },
+  "notice": {
+    "supersede": "新要求「{next}」取代了旧要求「{previous}」；以新的为准。"
+  }
+}

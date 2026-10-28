@@ -1,0 +1,9 @@
+- insert:
+    - id: directive-ledger
+      name: '@local/dsh-directive-ledger'
+      config:
+        budgetTokens: 800
+        textLanguage: auto
+        reminderMode: 'off'
+        extraction: deterministic
+        enforce: guard

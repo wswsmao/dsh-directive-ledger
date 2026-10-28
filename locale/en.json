@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "title": "Directive Ledger",
+    "description": "Keeps the user's standing requirements visible on every step, lets a newer requirement replace an older one, and blocks prohibitions it can verify."
+  },
+  "panel": {
+    "title": "Directive Ledger",
+    "subtitle": "Requirements still in force in this session"
+  },
+  "empty": {
+    "title": "No standing requirement found yet",
+    "body": "Entries appear here when you say things like \"always answer in Chinese\" or \"don't touch D:\\prod\". You can also add one with /rule add."
+  },
+  "status": {
+    "active": "In force",
+    "superseded": "Replaced",
+    "revoked": "Revoked",
+    "retracted": "Invalidated"
+  },
+  "kind": {
+    "pin": "Pinned",
+    "ban": "Prohibition",
+    "rule": "Rule",
+    "preference": "Preference",
+    "decision": "Decision"
+  },
+  "authority": {
+    "user-pinned": "Pinned by you",
+    "user-stated": "Stated by you",
+    "literal-anchored": "Literal match",
+    "model-inferred": "Inferred"
+  },
+  "action": {
+    "refresh": "Refresh",
+    "close": "Close",
+    "jump": "Go to source"
+  },
+  "summary": {
+    "active": "{count} in force",
+    "enforced": "{count} enforced",
+    "superseded": "{count} replaced"
+  },
+  "notice": {
+    "supersede": "The new requirement \"{next}\" replaced \"{previous}\"; the new one applies."
+  }
+}

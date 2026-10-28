@@ -1,0 +1,32 @@
+{
+  "name": "@local/dsh-directive-ledger",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Keeps the user's standing requirements visible on every model step, tracks which newer requirement supersedes which older one, and blocks machine-checkable prohibitions.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "lib/*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "docs/*.md",
+    "test/*.mjs",
+    ".gitignore"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
