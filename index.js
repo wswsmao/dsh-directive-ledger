@@ -60,6 +60,7 @@ const stateSchema = z.object({
 
 const viewSchema = z.object({
   revision: z.number().int().nonnegative(),
+  injected: z.number().int().nonnegative(),
   items: z.array(z.object({
     id: z.string(),
     text: z.string(),
@@ -72,6 +73,7 @@ const viewSchema = z.object({
     supersedes: z.array(z.string()).readonly(),
     supersededBy: z.string().nullable(),
     enforceable: z.boolean(),
+    injected: z.boolean(),
   })).readonly(),
 })
 
@@ -88,7 +90,7 @@ function readConfig(config) {
   return { budgetTokens, textLanguage, reminderMode, enforce }
 }
 
-const EMPTY_VIEW = Object.freeze({ revision: 0, items: [] })
+const EMPTY_VIEW = Object.freeze({ revision: 0, injected: 0, items: [] })
 
 /**
  * Mount the ledger.
@@ -99,6 +101,14 @@ export function apply(ctx, config = {}) {
   const options = readConfig(config)
   /** Ledger state for sessions that have no live cell yet. */
   const stateOf = (session) => ctx.sessionProjections.stateOf(session, PROJECTION_KEY) ?? emptyState()
+  /**
+   * The standing block plus the ids it actually contains.
+   *
+   * Both the prompt and the panel read this, so "in force" and "reached the
+   * model" cannot drift apart: an entry dropped for budget is marked as not
+   * injected instead of being presented as delivered.
+   */
+  const renderOf = (state) => renderLedger(state, options.budgetTokens, options.textLanguage)
 
   ctx.effect(() => ctx.sessionProjections.register({
     key: PROJECTION_KEY,
@@ -107,7 +117,7 @@ export function apply(ctx, config = {}) {
     apply: applyEvent,
     wire: {
       viewSchema,
-      view: (state) => viewOf(state),
+      view: (state) => viewOf(state, renderOf(state).included.map((directive) => directive.id)),
     },
     stateVersion: STATE_VERSION,
   }), 'directive-ledger: projection')
@@ -118,7 +128,7 @@ export function apply(ctx, config = {}) {
     required: true,
     text: (context) => {
       if (context.agent === undefined) return ''
-      return renderLedger(stateOf(context.agent.session), options.budgetTokens, options.textLanguage).text
+      return renderOf(stateOf(context.agent.session)).text
     },
   }), 'directive-ledger: runtime context')
 
@@ -151,7 +161,8 @@ export function apply(ctx, config = {}) {
 }
 
 /** The client view; kept next to the schemas it must satisfy. */
-function viewOf(state) {
+function viewOf(state, injectedIds) {
+  const injected = new Set(injectedIds)
   const items = Object.values(state.directives).map((directive) => ({
     id: directive.id,
     text: directive.text,
@@ -164,10 +175,11 @@ function viewOf(state) {
     supersedes: directive.supersedes,
     supersededBy: directive.supersededBy,
     enforceable: directive.checker !== null,
+    injected: injected.has(directive.id),
   }))
   if (items.length === 0) return EMPTY_VIEW
   items.sort((left, right) => left.sourceSeq - right.sourceSeq || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
-  return { revision: state.revision, items }
+  return { revision: state.revision, injected: injected.size, items }
 }
 
 /** `/rule` — read and edit the ledger without spending a model turn. */

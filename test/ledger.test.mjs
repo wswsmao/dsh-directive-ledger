@@ -160,3 +160,19 @@ test('/rule list separates the four retirement reasons', () => {
   assert.ok(text.includes('生效中'))
   assert.ok(text.includes('已取代'))
 })
+
+test('the wire view marks an entry the budget dropped as not injected', () => {
+  const state = fold(FIXTURE)
+  const rendered = renderLedger(state, 40)
+  const view = viewState(state, rendered.included.map((directive) => directive.id))
+  assert.ok(rendered.omitted.length > 0, 'the fixture must overflow a 40-token budget')
+  for (const item of rendered.omitted) {
+    assert.equal(view.items.find((entry) => entry.id === item.id).injected, false)
+  }
+  assert.equal(view.injected, rendered.included.length)
+})
+
+test('an empty ledger produces a wire value the schema accepts', () => {
+  const view = viewState(emptyState(), [])
+  assert.deepEqual(view, { revision: 0, injected: 0, items: [] })
+})
