@@ -16,6 +16,7 @@ import { explain, listLedger, renderLedger } from './lib/render.js'
 import { checkCall } from './lib/enforce.js'
 import { extractDirectives } from './lib/extract.js'
 import { reminderLines, reminderMessage } from './lib/remind.js'
+import { registerRoute } from './lib/route.js'
 import { nativePackage } from './lib/native.js'
 
 const { z } = await nativePackage('zod')
@@ -24,8 +25,15 @@ const { createUserMessage } = await nativePackage('@deepseek-ai/dsh-llm')
 /** Cordis plugin name. */
 export const name = 'directive-ledger'
 
-/** Services that must exist for the ledger to have any effect. */
-export const inject = ['sessionProjections', 'systemPrompt', 'tools', 'commands', 'agents']
+/**
+ * Services the ledger needs.
+ *
+ * `webServer` and `connection` carry the browser's delete action. They are part
+ * of this list rather than an optional inject because without them the panel
+ * would render a button that cannot work — a visible lie is worse than the
+ * plugin staying inactive.
+ */
+export const inject = ['sessionProjections', 'systemPrompt', 'tools', 'commands', 'agents', 'webServer', 'connection']
 
 /** Where the reminder context sits: after the host's own facts, before tools. */
 const CONTEXT_ORDER = 150
@@ -158,6 +166,7 @@ export function apply(ctx, config = {}) {
   }
 
   registerCommands(ctx, stateOf)
+  registerRoute(ctx)
 }
 
 /** The client view; kept next to the schemas it must satisfy. */

@@ -20,6 +20,8 @@ window.__ModuleLoader__.load({
     const NS = 'directive-ledger'
     const STYLE_ID = '@local/dsh-directive-ledger/DirectiveDock.css'
     const PROJECTION_KEY = 'directiveLedger'
+    /** Host route that performs a removal through the logged `/rule drop`. */
+    const API = '/plugins/directive-ledger'
 
     // ------------------------------------------------------------------ copy
 
@@ -41,6 +43,7 @@ window.__ModuleLoader__.load({
       'kind.decision': '决定',
       'source.turn': '第 {turn} 轮',
       'dock.omitted': '未注入',
+      'dock.remove': '删除这条要求：{text}',
       'replacedBy': '被「{text}」取代',
       'hint': '用 /rule list 查看、/rule drop 撤销；已有要求被改写时会自动更新。',
       'empty': '还没有识别到明确的长期要求。',
@@ -64,6 +67,7 @@ window.__ModuleLoader__.load({
       'kind.decision': 'Decision',
       'source.turn': 'turn {turn}',
       'dock.omitted': 'not injected',
+      'dock.remove': 'Remove this requirement: {text}',
       'replacedBy': 'replaced by “{text}”',
       'hint': 'Use /rule list to review and /rule drop to revoke; rewriting a prompt updates it automatically.',
       'empty': 'No standing requirement detected yet.',
@@ -165,6 +169,42 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-secondary);
   font-size: 11px;
 }
+.dld-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.dld-row:hover .dld-remove,
+.dld-remove:focus-visible {
+  opacity: 1;
+}
+.dld-remove:hover {
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-state-error-primary);
+}
+.dld-remove:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.dld-remove[data-visible="always"] { opacity: 1; }
+.dld-error {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+}
 .dld-row[data-status="superseded"] .dld-text,
 .dld-row[data-status="revoked"] .dld-text,
 .dld-row[data-status="retracted"] .dld-text {
@@ -198,8 +238,19 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** Small trash glyph; inherits the row's colour. */
+    function IconTrash() {
+      return h(
+        'svg',
+        { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, 'aria-hidden': true },
+        h('path', { d: 'M4 7h16' }),
+        h('path', { d: 'M10 7V5h4v2' }),
+        h('path', { d: 'M6 7l1 12h10l1-12' }),
+      )
+    }
+
     /** One requirement row. */
-    function Row({ item, t }) {
+    function Row({ item, t, removable, busy, onRemove }) {
       const badge = t(`kind.${item.kind}`)
       return h(
         'li',
@@ -215,7 +266,36 @@ window.__ModuleLoader__.load({
           item.status === 'active' && item.injected === false ? ' · ' : '',
           item.status === 'active' && item.injected === false ? t('dock.omitted') : '',
         ),
+        removable
+          ? h('button', {
+            type: 'button',
+            className: 'dld-remove',
+            title: t('dock.remove', { text: item.text }),
+            'aria-label': t('dock.remove', { text: item.text }),
+            disabled: busy,
+            onClick: (event) => {
+              event.stopPropagation()
+              onRemove(item)
+            },
+          }, h(IconTrash))
+          : null,
       )
+    }
+
+    /** POST one removal and surface the host's own refusal text. */
+    async function requestRemove(sessionId, directiveId, signal) {
+      const response = await fetch(`${API}/drop`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ sessionId, directiveId }),
+        signal,
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || payload?.ok !== true) {
+        throw new Error(payload?.message || `HTTP ${response.status}`)
+      }
+      return payload
     }
 
     /**
@@ -226,10 +306,12 @@ window.__ModuleLoader__.load({
      * stay visible so the plugin is never silently doing something.
      */
     function DirectiveDock(props) {
-      const { useProjection } = props
+      const { useProjection, sessionId } = props
       const t = props.t
       const view = useProjection(PROJECTION_KEY)
       const [expanded, setExpanded] = useState(false)
+      const [busyId, setBusyId] = useState(null)
+      const [error, setError] = useState(null)
       const items = Array.isArray(view?.items) ? view.items : []
       const groups = useMemo(() => ({
         active: items.filter((item) => item.status === 'active'),
@@ -240,6 +322,15 @@ window.__ModuleLoader__.load({
       const enforced = groups.active.filter((item) => item.enforceable).length
       const shown = expanded ? groups.active : groups.active.slice(0, 3)
       const retired = [...groups.superseded, ...groups.revoked, ...groups.retracted]
+
+      const remove = (item) => {
+        if (sessionId === undefined || busyId !== null) return
+        setBusyId(item.id)
+        setError(null)
+        requestRemove(sessionId, item.id)
+          .catch((failure) => setError(failure instanceof Error ? failure.message : String(failure)))
+          .finally(() => setBusyId(null))
+      }
 
       if (items.length === 0) return null
 
@@ -264,7 +355,14 @@ window.__ModuleLoader__.load({
         ),
         groups.active.length === 0
           ? h('span', { className: 'dld-empty' }, t('empty'))
-          : h('ul', { className: 'dld-list' }, shown.map((item) => h(Row, { key: item.id, item, t }))),
+          : h('ul', { className: 'dld-list' }, shown.map((item) => h(Row, {
+            key: item.id,
+            item,
+            t,
+            removable: sessionId !== undefined,
+            busy: busyId === item.id,
+            onRemove: remove,
+          }))),
         expanded && retired.length > 0
           ? h(
             'div',
@@ -273,6 +371,7 @@ window.__ModuleLoader__.load({
             h('ul', { className: 'dld-list' }, retired.map((item) => h(Row, { key: item.id, item, t }))),
           )
           : null,
+        error === null ? null : h('div', { className: 'dld-error', role: 'alert' }, error),
         expanded ? h('div', { className: 'dld-hint' }, t('hint')) : null,
       )
     }

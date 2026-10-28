@@ -27,6 +27,34 @@ const React = {
   useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
 }
 
+/**
+ * Find every element in a tree matching a predicate.
+ *
+ * The removal button has no visible text (its label is on `aria-label`), so
+ * reading rendered strings cannot prove it exists — the tree has to be walked.
+ * Function elements are expanded the same way the host would render them,
+ * otherwise a button produced inside a child component is invisible here.
+ *
+ * @param {unknown} node - element tree.
+ * @param {(element: {type: unknown, props: any}) => boolean} predicate - matcher.
+ * @returns {Array<{type: unknown, props: any}>} matches.
+ */
+function findAll(node, predicate, found = []) {
+  if (node === null || node === undefined || typeof node !== 'object') return found
+  if (Array.isArray(node)) {
+    for (const item of node) findAll(item, predicate, found)
+    return found
+  }
+  if (predicate(node)) found.push(node)
+  if (typeof node.type === 'function') {
+    findAll(node.type(node.props), predicate, found)
+    return found
+  }
+  const children = node.props?.children ?? []
+  for (const child of Array.isArray(children) ? children : [children]) findAll(child, predicate, found)
+  return found
+}
+
 /** Render a tree to a string so assertions can read the visible text. */
 function render(node) {
   if (node === null || node === undefined || node === false) return ''
@@ -163,6 +191,62 @@ test('the dock aligns itself to the composer card instead of spanning the column
   assert.match(css, /margin:\s*0 auto/, 'the card must be centred like the composer')
   assert.match(css, /--dsh-composer-side-clearance/, 'the card must subtract the composer side clearance')
   assert.match(css, /box-sizing:\s*border-box/, 'border-box keeps the padding inside the cap')
-  // A hard-coded pixel width would stop following the composer on resize.
-  assert.doesNotMatch(css, /\bwidth:\s*\d+px/, 'the dock must not hard-code a pixel width')
+  // The card FRAME must not hard-code a pixel width, or it stops following the
+  // composer on resize. Inner controls (an icon button) legitimately have one, so
+  // the check is scoped to the `.dld-dock` rule itself.
+  const dockRule = css.slice(css.indexOf('.dld-dock {'), css.indexOf('}', css.indexOf('.dld-dock {')))
+  assert.doesNotMatch(dockRule, /\bwidth:\s*\d+px/, 'the dock frame must not hard-code a pixel width')
+})
+
+/** Render the dock with the fixture ledger and a live session id. */
+function renderDock(options = {}) {
+  // Distinguish "not supplied" from "explicitly no session": a default parameter
+  // would turn `{sessionId: undefined}` back into a live session and hide the
+  // very case this helper is used to test.
+  const sessionId = Object.hasOwn(options, 'sessionId') ? options.sessionId : 'session-1'
+  const view = options.view ?? FIXTURE_VIEW
+  const plugin = loadPlugin()
+  const ctx = makeContext()
+  plugin.apply(ctx)
+  const component = ctx.__registrations[0].component
+  const t = ctx.locale.bind('directive-ledger')
+  return { tree: component({ useProjection: () => view, t, sessionId }), t }
+}
+
+test('each in-force row offers a removal control', () => {
+  const { tree } = renderDock()
+  const buttons = findAll(tree, (element) => element.props?.className === 'dld-remove')
+  // Three in-force entries in the fixture; the replaced one is not removable.
+  assert.equal(buttons.length, 3)
+  for (const button of buttons) {
+    assert.ok(button.props['aria-label'].startsWith('删除这条要求'), 'the control must name what it removes')
+    assert.equal(button.props.disabled, false)
+  }
+})
+
+test('clicking removal posts to the host route with the directive identity', async () => {
+  const { tree } = renderDock()
+  const button = findAll(tree, (element) => element.props?.className === 'dld-remove')[0]
+  const calls = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init })
+    return { ok: true, status: 200, json: async () => ({ ok: true, removed: 'd3-0' }) }
+  }
+  try {
+    button.props.onClick({ stopPropagation() {} })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].url, '/plugins/directive-ledger/drop')
+  assert.equal(calls[0].init.method, 'POST')
+  const body = JSON.parse(calls[0].init.body)
+  assert.equal(body.sessionId, 'session-1')
+  assert.equal(body.directiveId, 'd3-0')
+})
+
+test('without a session identity the dock omits the removal control', () => {
+  const { tree } = renderDock({ sessionId: undefined })
+  assert.equal(findAll(tree, (element) => element.props?.className === 'dld-remove').length, 0)
 })
