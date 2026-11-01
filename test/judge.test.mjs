@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 import { JUDGE_PROMPT_VERSION, openVerdicts, resolveDataDir, verdictKey } from '../lib/verdicts.js'
 import { JUDGE_INSTRUCTION, judgeMessage, judgeMessages, parseVerdict } from '../lib/judge.js'
-import { decide, refine } from '../lib/ledger.js'
+import { applyEvent, decide, emptyState, refine } from '../lib/ledger.js'
 
 /** A verdict the judge would produce for a message stating nothing standing. */
 const NONE = { kind: 'none', candidates: [], supersedes: [], reason: '这是对功能的反馈，不是长期要求' }
@@ -121,66 +121,81 @@ test('a cached verdict decides the message without re-running the rules', () => 
   assert.deepEqual(decided.candidates, [])
 })
 
-test('a message with no verdict yet falls back to rules and is marked pending', () => {
+test('a message with no verdict yet writes nothing and is parked', () => {
   const decided = decide('固定任务里面不能选模型', () => undefined)
-  // The rules still misread it as a pin — that is exactly why the verdict exists,
-  // and why the entry is marked pending rather than presented as settled.
+  // The rules misread it as a pin — that is exactly why the verdict exists. In
+  // semantic mode they must not be allowed to act on that reading: an entry
+  // written now is injected before the judgement that would have dropped it.
+  assert.equal(decided.source, 'pending')
+  assert.deepEqual(decided.candidates, [])
+  assert.match(decided.reason, /等待语义判定/)
+})
+
+test('without a verdict source the rules still judge directly', () => {
+  // Deterministic mode has no judge to wait for, so the old behaviour is correct
+  // there: the rules are the only authority and may write immediately.
+  const decided = decide('固定任务里面不能选模型', undefined)
   assert.equal(decided.source, 'rules')
   assert.equal(decided.candidates.length, 1)
-  assert.match(decided.reason, /尚未判定/)
 })
 
-test('refine removes entries the verdict says are not requirements', () => {
-  const state = {
-    directives: {
-      'd1-0': {
-        id: 'd1-0', sourceSeq: 1, turn: 1, quote: '固定任务里面不能选模型', text: '固定任务里面不能选模型',
-        kind: 'pin', topicKey: 'general.x', authority: 'user-stated', status: 'active',
-        supersedes: [], supersededBy: null, checker: null, judged: 'rules', reason: '',
-      },
-    },
-    order: ['d1-0'],
-    revision: 1,
-    openTurn: 1,
-  }
-  const corrected = refine(state, { resolve: () => NONE })
-  assert.equal(Object.keys(corrected.directives).length, 0)
-  assert.deepEqual(corrected.order, [])
+test('an unjudged message is parked in pending rather than written', () => {
+  const state = applyEvent(emptyState(), {
+    seq: 7,
+    type: 'user/message',
+    data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '固定任务里面不能选模型' }] },
+  }, { resolve: () => undefined })
+  assert.deepEqual(Object.keys(state.directives), [])
+  assert.equal(state.pending['7'].text, '固定任务里面不能选模型')
+  assert.equal(state.pending['7'].seq, 7)
 })
 
-test('refine replaces a pending entry with the verdicts candidates', () => {
-  const state = {
-    directives: {
-      'd1-0': {
-        id: 'd1-0', sourceSeq: 1, turn: 1, quote: '以后都用中文', text: '以后都用中文',
-        kind: 'rule', topicKey: 'general.x', authority: 'user-stated', status: 'active',
-        supersedes: [], supersededBy: null, checker: null, judged: 'rules', reason: '',
-      },
-    },
-    order: ['d1-0'],
-    revision: 1,
-    openTurn: 1,
+test('a parked message is admitted once its verdict arrives', () => {
+  const text = '以后都用中文'
+  let verdict
+  const resolve = () => verdict
+  const parked = applyEvent(emptyState(), {
+    seq: 3,
+    type: 'user/message',
+    data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] },
+  }, { resolve })
+  assert.equal(Object.keys(parked.directives).length, 0)
+  verdict = {
+    kind: 'rule',
+    candidates: [{ text: '以后都用中文回答', kind: 'rule', topicKey: 'output.language' }],
+    supersedes: [],
+    reason: '语言偏好',
   }
-  const corrected = refine(state, {
-    resolve: () => ({
-      kind: 'rule',
-      candidates: [{ text: '以后都用中文回答', kind: 'rule', topicKey: 'output.language' }],
-      supersedes: [],
-      reason: '语言偏好',
-    }),
-  })
-  const values = Object.values(corrected.directives)
+  const admitted = applyEvent(parked, { seq: 4, type: 'turn/start', data: { turn: 2 } }, { resolve })
+  const values = Object.values(admitted.directives)
   assert.equal(values.length, 1)
   assert.equal(values[0].topicKey, 'output.language')
   assert.equal(values[0].judged, 'model')
+  assert.deepEqual(admitted.pending, {})
 })
 
-test('refine is a no-op when nothing is pending', () => {
-  const state = { directives: {}, order: [], revision: 0, openTurn: 0 }
+test('a parked message judged as none disappears without a trace', () => {
+  const text = '重新讨论这个问题'
+  let verdict
+  const resolve = () => verdict
+  const parked = applyEvent(emptyState(), {
+    seq: 5,
+    type: 'user/message',
+    data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] },
+  }, { resolve })
+  assert.equal(Object.keys(parked.pending).length, 1)
+  verdict = { kind: 'none', candidates: [], supersedes: [], reason: '本轮动作指令' }
+  const cleared = applyEvent(parked, { seq: 6, type: 'turn/start', data: { turn: 2 } }, { resolve })
+  assert.deepEqual(Object.keys(cleared.directives), [])
+  assert.deepEqual(cleared.pending, {})
+})
+
+test('refine is a no-op when nothing is parked', () => {
+  const state = emptyState()
   assert.equal(refine(state, { resolve: () => NONE }), state)
 })
 
-test('a judge failure falls back to the rules instead of throwing', async () => {
+test('a judge failure records nothing instead of falling back to the rules', async () => {
   const warnings = []
   const result = await judgeMessage({
     llm: { stream: () => { throw new Error('provider down') } },
@@ -189,12 +204,15 @@ test('a judge failure falls back to the rules instead of throwing', async () => 
     active: [],
     options: { provider: 'p', model: 'm', timeoutMs: 1000, warn: (message) => warnings.push(message) },
   })
-  assert.equal(result.source, 'fallback')
-  assert.equal(result.candidates.length, 1)
+  // A broken route is a defect, not a verdict. Writing the regex reading here
+  // would make an unjudged sentence into a standing requirement.
+  assert.equal(result.source, 'failed')
+  assert.deepEqual(result.candidates, [])
+  assert.equal(result.verdict, undefined)
   assert.ok(warnings.length === 1)
 })
 
-test('an unparseable reply also falls back', async () => {
+test('an unparseable reply records nothing', async () => {
   const result = await judgeMessage({
     llm: {
       stream: () => (async function* () {
@@ -207,7 +225,10 @@ test('an unparseable reply also falls back', async () => {
     active: [],
     options: { provider: 'p', model: 'm', timeoutMs: 1000 },
   })
-  assert.equal(result.source, 'fallback')
+  // An unreadable reply is not a verdict either: guess from the regexes would
+  // reintroduce exactly the unjudged write this design removed.
+  assert.equal(result.source, 'failed')
+  assert.deepEqual(result.candidates, [])
 })
 
 test('a good reply is cached and the second call skips the model', async () => {

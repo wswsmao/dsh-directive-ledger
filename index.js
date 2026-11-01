@@ -67,11 +67,20 @@ const directiveSchema = z.object({
   reason: z.string().optional(),
 })
 
+const pendingSchema = z.object({
+  seq: z.number().int().nonnegative(),
+  turn: z.number().int().nonnegative(),
+  text: z.string(),
+})
+
 const stateSchema = z.object({
   directives: z.record(z.string(), directiveSchema).readonly(),
   order: z.array(z.string()).readonly(),
   revision: z.number().int().nonnegative(),
   openTurn: z.number().int().nonnegative(),
+  // User messages parked until the semantic judge answers. Absent in states
+  // written before this field existed, so it must stay optional.
+  pending: z.record(z.string(), pendingSchema).readonly().optional(),
 })
 
 const viewSchema = z.object({
@@ -193,9 +202,9 @@ export function apply(ctx, config = {}) {
         ? { provider: header?.provider ?? '', model: header?.model ?? '' }
         : { provider: options.judgeProvider, model: header?.model ?? '' }
       if (route.provider === '' || route.model === '') {
-        // No route yet (a brand-new session before its first request). The rules
-        // still record the message and `refine` corrects it once a verdict is
-        // possible, so skipping here loses nothing.
+        // No route yet (a brand-new session before its first request). The
+        // message stays parked in `pending` and is admitted by a later fold once
+        // a verdict is possible, so skipping here loses nothing.
         return
       }
       // Fire and forget: the judgement must never delay or fail the turn. Its
